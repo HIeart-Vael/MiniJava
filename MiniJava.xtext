@@ -1,0 +1,194 @@
+grammar org.xtext.projects.minijava.MiniJava with org.eclipse.xtext.common.Terminals
+
+generate miniJava "http://www.xtext.org/projects/minijava/MiniJava"
+
+Goal:
+	('package' name=QualifiedName ';')? // !Check the QualifiedName is correct 
+	imports+=ImportDecl*  
+	classes+=ClassDecl* 
+;
+
+ImportDecl:
+	'import' importNamespace=QualifiedNameWithWildcard ';' // !Check if the imported files exist 
+;
+
+QualifiedName:
+	ID ('.' ID)*
+;
+
+QualifiedNameWithWildcard: 
+	QualifiedName '.*'?
+;
+
+ClassDecl:
+	'class' name=ID ('extends' superclass=[ClassDecl|QualifiedName])?  // !check Hierarchy Cycle
+	 //("implements" QualifiedNameList)?
+	 '{'
+		members+=MemberDecl*
+	'}'
+;
+
+MemberDecl:
+	FieldDecl | MethodDecl 
+;	
+
+FieldDecl :
+	access = MJAccessLevel? TypeDecl ';'
+; 
+
+MethodDecl:
+	access=MJAccessLevel? TypeDecl // !check return type
+	'('  (params+=Parameter (',' params+=Parameter)*)?')'
+	body=Block
+;
+Parameter:
+	TypeDecl
+;
+VarList:
+	vars+=CommonTypeDecl (',' vars+=CommonTypeDecl)* 
+;
+
+Symbol:
+	Parameter | 
+	VarDecl 
+;
+
+MJNamedElement:
+	ClassDecl | MemberDecl | Symbol
+;
+
+enum MJAccessLevel:
+	PRIVATE='private' | PROTECTED='protected' | PUBLIC='public';
+
+Block:
+	{Block} '{' statements+=Statement* '}'
+;
+
+Statement:
+	VarDecl |
+	Return |
+	Expression ';' |
+	IfStatement |
+	WhileStatement
+;
+
+VarDecl:
+	decltype=Type  name=ID '=' expression=Expression ';' // !check name Duplication. !check the expression Type/VarList
+;
+fragment TypeDecl *:
+	type=Type name=ID
+;
+CommonTypeDecl :
+	decltype = CommonType name=ID  // !check name Duplication
+;	
+VarListTypeDecl:
+	decltype = VarListType name=ID
+;
+Return:
+	'return' expression = Expression ';' // !check Type
+;
+
+IfStatement:
+	'if' '(' expression=Expression ')' thenBlock = BranchBlock // !check Type
+	(=> 'else' elseBlock = BranchBlock)?
+;
+
+WhileStatement:
+	'while' '(' expression=Expression ')' // !check Type
+	whileBlock = BranchBlock
+;
+
+BranchBlock returns Block:
+	satements+=Statement
+	| body=Block
+;
+
+Expression:
+	Assignment	
+;
+
+Assignment returns Expression:
+	LogicAnd
+	({Assignment.left=current} '=' right=Expression)? //!check Type
+;
+
+LogicAnd returns Expression:
+	CompExpression
+	({And.left =current} '&&' right=CompExpression)* //!check Type
+;
+
+CompExpression returns Expression:
+	PlusOrMinus
+	({CompExpression.left =current} '<' right=PlusOrMinus)? //!check Type
+;
+
+PlusOrMinus returns Expression:
+	MultOrDiv
+	({PlusOrMinus.left =current} op=('+'|'-') right=MultOrDiv)*
+;
+MultOrDiv returns Expression:
+	SelectionOrNegation
+	({MultOrDiv.left =current} op=('*' | '/') right=SelectionOrNegation)*  //!check Type
+;  
+SelectionOrNegation returns Expression:
+	LogicNegation
+	| SelectionExpression
+;
+LogicNegation returns Expression:
+	 {LogicNegation} op = '!' right = SelectionExpression //!check Type
+;
+
+SelectionExpression returns Expression:
+	SquareBrackets
+	(
+		{MemberSelection.receiver=current} '.'
+		member=[MemberDecl]
+		(methodinvocation?='('
+			 (args+=Expression (',' args+=Expression)*)?  ')'  // Check it can pass only one VarList variable in
+		)? 	// check args number and type
+	)*
+; // !check receiver must return an object(class/this/super) and only a method have args 
+SquareBrackets returns Expression:
+//! right Expression expects an Int value
+	TerminalExpression({SquareBrackets.left =current} expressionType = '[' right=Expression ']' )?
+;
+
+TerminalExpression returns Expression:
+	{StringConstant} value=STRING |
+	{IntConstant} value=INT |
+	{BoolConstant} value=('true' | 'false') |
+	{This} 'this' |
+	{Super} 'super' | // !check super must be use in a member selection expression
+	{Null} 'null' |
+	{NewObject} 'new' type=[ClassDecl|QualifiedName] '('')'|  
+	{New}	'new' dataType=CommonType  '[' capacity=Expression ']'   | // !check the Expression as capacity returns an Int value
+	{DoubleConstant} value=DoubleLiteral |
+	{SymbolRef} symbol=[Symbol] |
+	'(' Expression ')' |
+	{VarListObj}'(' vars+=[CommonTypeDecl] ':' exprs+=Expression (',' vars+=[CommonTypeDecl] ':' exprs+=Expression)* ')'
+;
+
+DoubleLiteral:
+	INT '.' INT? |
+	'.' INT?
+;
+
+Type:
+	VarListType |
+	CommonType
+;
+
+CommonType :
+	(typename = 'int'
+	|	typename = 'boolean' 
+	|   typename = 'void'
+	|   typename = 'double'
+	|   typename = 'char'
+	|   typename = 'string'
+	|	classname = [ClassDecl|QualifiedName])
+	(arrays+='[]')?
+;
+
+VarListType:
+	'(' typelist=VarList ')'
+;
